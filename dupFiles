@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Find timestamp-based filename duplicates, using an installation-local index."""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+
+INDEX = Path(__file__).resolve().parent / 'dupFiles.index.json'
+VERSION = 2
+STAMP = re.compile(r'(?<!\d)(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2})(?!\d)')
+
+
+def timestamp(name):
+    matches = STAMP.findall(name)
+    if len(matches) != 1:
+        return None
+    try:
+        datetime.datetime.strptime(matches[0], '%Y-%m-%d %H.%M.%S')
+    except ValueError:
+        return None
+    return matches[0]
+
+
+def duplicate_key(name):
+    stem = Path(name).stem
+    stamp = timestamp(stem)
+    if stamp is not None:
+        return 'Zeitstempel: ' + stamp
+    return 'Dateiname: ' + name.casefold()
+
+
+def fingerprint(path):
+    """Reject symlinks, including replaced parent directories."""
+    p = Path(path)
+    if str(p.resolve()) != str(p):
+        return None
+    try:
+        s = p.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(s.st_mode):
+        return None
+    return [s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns]
+
+
+def scan(roots, extension):
+    entries = []
+    seen = set()
+    def fail(error):
+        raise error
+    for number, root in enumerate(roots, 1):
+        for directory, dirs, names in os.walk(root, followlinks=False, onerror=fail):
+            dirs[:] = sorted(d for d in dirs if not Path(directory, d).is_symlink())
+            for name in sorted(names):
+                path = str(Path(directory, name))
+                if path in seen or Path(name).suffix.casefold() != extension:
+                    continue
+                key = duplicate_key(name)
+                identity = fingerprint(path)
+                if identity is None:
+                    continue
+                seen.add(path)
+                entries.append(dict(path=path, root=number, key=key, identity=identity))
+    return entries
+
+
+def save_index(config, entries):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=INDEX.parent,
+                                         prefix='.dupFiles-', delete=False) as out:
+            temporary = out.name
+            json.dump(dict(version=VERSION, config=config, entries=entries), out,
+                      ensure_ascii=False, indent=2)
+            out.write('\n')
+        os.replace(temporary, INDEX)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def load_index(config, rebuild):
+    if not rebuild:
+        try:
+            data = json.loads(INDEX.read_text(encoding='utf-8'))
+            if data['version'] == VERSION and data['config'] == config:
+                entries = data['entries']
+                if not isinstance(entries, list):
+                    raise ValueError('Ungültige Einträge')
+                for e in entries:
+                    if (not isinstance(e, dict) or not isinstance(e.get('path'), str)
+                        or type(e.get('root')) is not int or not 1 <= e['root'] <= len(config['roots'])
+                        or not isinstance(e.get('identity'), list) or len(e['identity']) != 5
+                        or not Path(e['path']).is_absolute()
+                        or not Path(e['path']).is_relative_to(config['roots'][e['root'] - 1])
+                        or Path(e['path']).suffix.casefold() != config['extension']
+                        or duplicate_key(Path(e['path']).name) != e.get('key') or not e.get('key')):
+                        raise ValueError('Ungültiger Indexeintrag')
+                if len({e['path'] for e in entries}) != len(entries):
+                    raise ValueError('Doppelte Indexeinträge')
+                print(f'Index geladen: {INDEX}')
+                return entries
+        except (FileNotFoundError, ValueError, KeyError, TypeError):
+            pass
+    entries = scan(config['roots'], config['extension'])
+    save_index(config, entries)
+    print(f'Index neu aufgebaut: {INDEX}')
+    return entries
+
+
+def parser():
+    p = argparse.ArgumentParser(description='Rekursive Duplikatsuche nach Dateinamen oder enthaltenem Zeitstempel.',
+        epilog='Beispiel: dupFiles --newindex --extension .jpg --delete=13 ~/Dropbox ~/tmp ~/verz1')
+    p.add_argument('--extension', required=True, help='Dateiendung ohne Beachtung der Groß-/Kleinschreibung, z. B. .jpg')
+    p.add_argument('--newindex', action='store_true', help='Suchindex vollständig neu aufbauen')
+    p.add_argument('--delete', metavar='NUMMERN', help='Duplikate nach Bestätigung löschen, z. B. 13')
+    p.add_argument('paths', nargs='*', help='0 bis 9 Suchverzeichnisse; Standard: aktuelles Verzeichnis')
+    return p
+
+
+def main(argv=None):
+    p = parser()
+    args = p.parse_args(argv)
+    if len(args.paths) > 9:
+        p.error('Höchstens 9 Suchverzeichnisse sind erlaubt.')
+    extension = args.extension.lstrip('=').lstrip('.').casefold()
+    if not extension or any(c in extension for c in '/\\'):
+        p.error('Bitte eine gültige Dateiendung angeben, z. B. .jpg.')
+    roots = [str(Path(d).expanduser().resolve()) for d in (args.paths or ['.'])]
+    for root in roots:
+        if not Path(root).is_dir():
+            p.error(f'Kein Verzeichnis: {root}')
+    selected = set()
+    if args.delete is not None:
+        if not re.fullmatch('[1-9]+', args.delete):
+            p.error('--delete erwartet Verzeichnisnummern von 1 bis 9, z. B. --delete=13.')
+        selected = {int(n) for n in args.delete}
+        if max(selected) > len(roots):
+            p.error('--delete verweist auf ein nicht angegebenes Suchverzeichnis.')
+    for i, root in enumerate(roots, 1):
+        print(f'Verzeichnis {i}: {root}')
+    config = dict(roots=roots, extension='.' + extension)
+    entries = load_index(config, args.newindex)
+    groups = {}
+    stale = 0
+    for e in entries:
+        if fingerprint(e['path']) != e['identity']:
+            stale += 1
+            continue
+        groups.setdefault(e['key'], []).append(e)
+    duplicates = [group for group in groups.values() if len(group) > 1]
+    if stale:
+        print(f'Hinweis: {stale} veränderte/fehlende Indexeinträge übersprungen. Bitte --newindex verwenden.')
+    print('Neue Dateien werden erst mit --newindex erfasst.')
+    if not duplicates:
+        print('Keine Duplikate gefunden.')
+        return 0
+    print('\nSpalte 1: X = zur Löschung ausgewählt, - = bleibt erhalten')
+    planned = []
+    for group in duplicates:
+        group.sort(key=lambda e: (e['root'], e['path']))
+        victims = [e for e in group if e['root'] in selected]
+        survivors = [e for e in group if e['root'] not in selected]
+        if not survivors:
+            survivors = group[:1]
+            victims = group[1:] if selected else []
+        print(f"\n{group[0]['key']}")
+        for e in group:
+            marker = 'X' if e in victims else '-'
+            # Escape control characters to keep each path on one terminal line.
+            path_display = json.dumps(e['path'], ensure_ascii=False)
+            print(f"{marker}  [{e['root']}] {path_display}")
+        planned.append((victims, survivors))
+    print(f'\n{len(duplicates)} Duplikatgruppen, {sum(len(g) for g in duplicates)} Dateien.')
+    sys.stdout.flush()
+    count = sum(len(victims) for victims, _ in planned)
+    if count:
+        print(f'\nACHTUNG: {count} mit X markierte Dateien werden endgültig gelöscht (kein Papierkorb).')
+        print('Pro Duplikatgruppe bleibt mindestens eine Datei erhalten.')
+        try:
+            answer = input('Zum Löschen JA eingeben; jede andere Eingabe bricht ab: ')
+        except (EOFError, KeyboardInterrupt):
+            print('\nAbgebrochen. Keine Dateien gelöscht.')
+            return 0
+        if answer.strip() != 'JA':
+            print('Abgebrochen. Keine Dateien gelöscht.')
+            return 0
+    removed = set()
+    failed = False
+    for victims, survivors in planned:
+        for e in victims:
+            try:
+                if not any(fingerprint(s['path']) == s['identity'] for s in survivors):
+                    raise RuntimeError('Keine unveränderte verbleibende Datei vorhanden')
+                if fingerprint(e['path']) != e['identity']:
+                    raise RuntimeError('Datei seit Indexierung verändert')
+                os.unlink(e['path'])
+                removed.add(e['path'])
+                print(f"Gelöscht: {json.dumps(e['path'], ensure_ascii=False)}")
+            except (OSError, RuntimeError) as error:
+                failed = True
+                print(f"Nicht gelöscht: {e['path']!r}: {error}", file=sys.stderr)
+    if removed:
+        save_index(config, [e for e in entries if e['path'] not in removed])
+    if selected:
+        print(f'{len(removed)} Dateien gelöscht.')
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, RuntimeError) as error:
+        print(f'Fehler: {error}', file=sys.stderr)
+        sys.exit(1)
