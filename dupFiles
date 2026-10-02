@@ -11,8 +11,10 @@ import sys
 import tempfile
 
 INDEX = Path(__file__).resolve().parent / 'dupFiles.index.json'
-VERSION = 2
+VERSION = 3
 STAMP = re.compile(r'(?<!\d)(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2})(?!\d)')
+
+EPOCH = re.compile(r'(?<!\d)([0-9]{13}|[0-9]{10})(?!\d)')
 
 
 def timestamp(name):
@@ -29,8 +31,13 @@ def timestamp(name):
 def duplicate_key(name):
     stem = Path(name).stem
     stamp = timestamp(stem)
-    if stamp is not None:
+    epochs = EPOCH.findall(stem)
+    calendar_matches = STAMP.findall(stem)
+    if stamp is not None and not epochs:
         return 'Zeitstempel: ' + stamp
+    if len(epochs) == 1 and not calendar_matches:
+        unit = 'ms' if len(epochs[0]) == 13 else 's'
+        return f'Epoch ({unit}): {epochs[0]}'
     return 'Dateiname: ' + name.casefold()
 
 

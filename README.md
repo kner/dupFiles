@@ -26,6 +26,16 @@ Dateien mit derselben angegebenen Endung und exakt demselben Zeitstempel `JJJJ-M
 cb_2026-09-16 09.55.05.JPG
 ```
 
+Auch eingebettete Epoch-Zeitstempel werden erkannt: 10 Ziffern für Sekunden oder 13 Ziffern für Millisekunden. Beispielsweise gehören diese Dateien zusammen:
+
+```text
+1607083502589.mp4
+cb_1607083502589.mp4
+1607083502589_cb.mp4
+```
+
+Der Zahlenblock darf beliebige Zusätze haben, aber kein Teil einer längeren Ziffernfolge sein. Verglichen wird der exakte Epoch-Wert innerhalb derselben Einheit; unterschiedliche Millisekunden bleiben getrennt. Sekunden-, Millisekunden- und Kalenderformate werden nicht ineinander umgerechnet. Bei mehreren Zeitstempeln oder einer Mischung aus Kalender- und Epoch-Zeitstempel wird nur der vollständige Dateiname verglichen. 10- oder 13-stellige Zahlen werden als Epoch interpretiert; auch eine gleich lange Kennnummer kann daher Treffer erzeugen.
+
 Die Endung wird ohne Beachtung der Groß-/Kleinschreibung verglichen. Erlaubt sind `--extension .jpg`, `--extension=jpg` und `--extension==jpg`. Dateien ohne eindeutigen gültigen Zeitstempel werden anhand ihres vollständigen Dateinamens verglichen, ebenfalls ohne Beachtung der Groß-/Kleinschreibung. Damit werden beispielsweise drei Dateien namens `1607083502589.mp4` in verschiedenen Unterverzeichnissen als eine Duplikatgruppe erkannt. Für diese Suche `--extension .mp4` angeben. Dateiinhalte werden nicht verglichen: Gleiche Zeitstempel können auch zu unterschiedlichen Bildern gehören.
 
 Symbolische Links auf Dateien oder Verzeichnisse werden innerhalb der Suche nicht verfolgt. Ein als Suchpfad angegebener Link wird dagegen vor der Suche in seinen absoluten Zielpfad aufgelöst. Bei überlappenden Suchpfaden wird jeder absolute Dateipfad nur einmal erfasst und dem zuerst angegebenen passenden Suchverzeichnis zugeordnet.

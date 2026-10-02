@@ -140,7 +140,47 @@ class DuplicateTests(unittest.TestCase):
             code = app.main(['--extension', '.mp4', *map(str, self.roots)])
         self.assertEqual(code, 0)
         self.assertIn('1 Duplikatgruppen, 3 Dateien', out.getvalue())
-        self.assertIn('Dateiname: 1607083502589.mp4', out.getvalue())
+        self.assertIn('Epoch (ms): 1607083502589', out.getvalue())
+
+    def test_embedded_epoch_variants(self):
+        for epoch in ('1607083502', '1607083502589'):
+            for root, name in zip(self.roots, (epoch, 'cb_' + epoch, epoch + '_cb')):
+                self.file(root, name + '.jpg')
+        code, output = self.run_app()
+        self.assertEqual(code, 0)
+        self.assertIn('2 Duplikatgruppen, 6 Dateien', output)
+        self.assertIn('Epoch (s): 1607083502', output)
+        self.assertIn('Epoch (ms): 1607083502589', output)
+
+    def test_epoch_boundaries_and_ambiguity(self):
+        for name in ('x16070835025890.jpg', 'x16070835025.jpg',
+                     '1607083502_1607083503.jpg',
+                     '2026-09-16 09.55.05_1607083502589.jpg'):
+            self.assertEqual(app.duplicate_key(name), 'Dateiname: ' + name.casefold())
+        self.assertEqual(app.duplicate_key('video1607083502589copy.jpg'),
+                         'Epoch (ms): 1607083502589')
+        self.assertNotEqual(app.duplicate_key('1607083502589.jpg'),
+                            app.duplicate_key('1607083502590.jpg'))
+
+    def test_epoch_delete_confirmation_and_survivor(self):
+        files = [self.file(root, name + '.jpg') for root, name in zip(
+            self.roots, ('1607083502589', 'cb_1607083502589', '1607083502589_cb'))]
+        self.run_app('--delete=123')
+        self.assertTrue(all(p.exists() for p in files))
+        self.run_app('--delete=123', answer='JA')
+        self.assertEqual([p.exists() for p in files], [True, False, False])
+
+    def test_previous_epoch_index_rebuilt(self):
+        import json
+        self.file(self.roots[0], '1607083502589.jpg')
+        self.file(self.roots[1], 'cb_1607083502589.jpg')
+        self.run_app()
+        data = json.loads(app.INDEX.read_text())
+        data['version'] = 2
+        for entry in data['entries']:
+            entry['key'] = 'Dateiname: ' + Path(entry['path']).name.casefold()
+        app.INDEX.write_text(json.dumps(data))
+        self.assertIn('1 Duplikatgruppen', self.run_app()[1])
 
     def test_case_insensitive_plain_names(self):
         self.file(self.roots[0], 'Holiday.jpg')
