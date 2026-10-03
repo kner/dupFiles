@@ -204,6 +204,40 @@ class DuplicateTests(unittest.TestCase):
         self.assertIsNone(app.timestamp('holiday'))
         self.assertIsNone(app.timestamp('2026-09-16 09.55.05_2026-09-16 09.55.06'))
 
+    def test_camera_upload_numbers_are_distinct(self):
+        stamp = '2025-11-22 20.55.25'
+        names = [stamp + suffix + '.jpg' for suffix in ('', '-1', '-10', '-11', '-12', '-13')]
+        self.assertEqual(len({app.duplicate_key(name) for name in names}), len(names))
+        files = [self.file(self.roots[0], name) for name in names]
+        code, output = self.run_app('--delete=1', answer='JA')
+        self.assertEqual(code, 0)
+        self.assertIn('Keine Duplikate', output)
+        self.assertTrue(all(path.exists() for path in files))
+
+    def test_same_camera_upload_number_matches_variants(self):
+        stamp = '2025-11-22 20.55.25-10'
+        files = [self.file(root, name + '.jpg') for root, name in zip(
+            self.roots, (stamp, 'cb_' + stamp, stamp + '_cb'))]
+        code, output = self.run_app('--delete=13', answer='JA')
+        self.assertEqual(code, 0)
+        self.assertIn('1 Duplikatgruppen, 3 Dateien', output)
+        self.assertEqual([path.exists() for path in files], [False, True, False])
+
+    def test_old_camera_upload_index_rebuilt(self):
+        import json
+        for suffix in ('-1', '-10'):
+            self.file(self.roots[0], '2025-11-22 20.55.25' + suffix + '.jpg')
+        self.run_app()
+        data = json.loads(app.INDEX.read_text())
+        data['version'] = 3
+        for entry in data['entries']:
+            entry['key'] = 'Zeitstempel: 2025-11-22 20.55.25'
+        app.INDEX.write_text(json.dumps(data))
+        code, output = self.run_app('--delete=1', answer='JA')
+        self.assertEqual(code, 0)
+        self.assertIn('Index neu aufgebaut', output)
+        self.assertIn('Keine Duplikate', output)
+
 
 if __name__ == '__main__':
     unittest.main()

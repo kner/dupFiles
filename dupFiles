@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 INDEX = Path(__file__).resolve().parent / 'dupFiles.index.json'
-VERSION = 3
+VERSION = 4
 STAMP = re.compile(r'(?<!\d)(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2})(?!\d)')
 
 EPOCH = re.compile(r'(?<!\d)([0-9]{13}|[0-9]{10})(?!\d)')
@@ -34,7 +34,10 @@ def duplicate_key(name):
     epochs = EPOCH.findall(stem)
     calendar_matches = STAMP.findall(stem)
     if stamp is not None and not epochs:
-        return 'Zeitstempel: ' + stamp
+        # CameraUploads numbers distinguish photos taken in the same second.
+        suffix = stem[stem.index(stamp) + len(stamp):]
+        number = re.match(r'-([0-9]+)(?![0-9])', suffix)
+        return 'Zeitstempel: ' + stamp + (number.group(0) if number else '')
     if len(epochs) == 1 and not calendar_matches:
         unit = 'ms' if len(epochs[0]) == 13 else 's'
         return f'Epoch ({unit}): {epochs[0]}'

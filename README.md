@@ -26,6 +26,8 @@ Dateien mit derselben angegebenen Endung und exakt demselben Zeitstempel `JJJJ-M
 cb_2026-09-16 09.55.05.JPG
 ```
 
+Eine direkt an den Kalender-Zeitstempel angehängte Nummer (`-1`, `-10` usw.) wird mitverglichen. Daher bleiben `2025-11-22 20.55.25-1.jpg`, `2025-11-22 20.55.25-10.jpg`, `-11.jpg`, `-12.jpg` und `-13.jpg` in getrennten Gruppen. Auch die Datei ohne Nummer bleibt getrennt. Zusätze wie `cb_` oder `_cb` werden weiterhin ignoriert, etwa bei `cb_2025-11-22 20.55.25-1.jpg`.
+
 Auch eingebettete Epoch-Zeitstempel werden erkannt: 10 Ziffern für Sekunden oder 13 Ziffern für Millisekunden. Beispielsweise gehören diese Dateien zusammen:
 
 ```text
