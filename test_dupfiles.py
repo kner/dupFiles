@@ -204,6 +204,90 @@ class DuplicateTests(unittest.TestCase):
         self.assertIsNone(app.timestamp('holiday'))
         self.assertIsNone(app.timestamp('2026-09-16 09.55.05_2026-09-16 09.55.06'))
 
+    def test_delete_string_matches_directory_regex(self):
+        a = self.file(self.roots[0], 'CameraUploads/holiday.jpg')
+        b = self.file(self.roots[1], 'Archive/holiday.jpg')
+        c = self.file(self.roots[2], 'Kopien/holiday.jpg')
+        single = self.file(self.roots[0], 'CameraUploads/unique.jpg')
+        pattern = '--deleteString=/(CameraUploads|Kopien)/'
+        code, output = self.run_app(pattern)
+        self.assertEqual(code, 0)
+        self.assertIn('2 mit X markierte Dateien', output)
+        self.assertTrue(all(path.exists() for path in (a, b, c, single)))
+        code, output = self.run_app(pattern, answer='JA')
+        self.assertEqual(code, 0)
+        self.assertEqual([path.exists() for path in (a, b, c, single)], [False, True, False, True])
+        self.assertIn('2 Dateien gelöscht.', output)
+        self.assertIn('Keine Duplikate', self.run_app()[1])
+
+    def test_delete_string_matches_filename_and_retains_one(self):
+        files = [self.file(root, 'holiday.jpg') for root in self.roots]
+        code, output = self.run_app('--deleteString=holiday\\.jpg$', answer='JA')
+        self.assertEqual(code, 0)
+        self.assertEqual([path.exists() for path in files], [True, False, False])
+        self.assertIn('2 Dateien gelöscht.', output)
+
+    def test_delete_string_without_match_does_not_prompt(self):
+        files = [self.file(root, 'holiday.jpg') for root in self.roots]
+        with redirect_stdout(StringIO()) as out, patch('builtins.input') as prompt:
+            code = app.main(['--extension', '.jpg', '--deleteString=HOLIDAY', *map(str, self.roots)])
+        self.assertEqual(code, 0)
+        prompt.assert_not_called()
+        self.assertTrue(all(path.exists() for path in files))
+        self.assertIn('0 Dateien gelöscht.', out.getvalue())
+
+    def test_delete_string_invalid_options(self):
+        for flags in (('--deleteString=',), ('--deleteString=[',),
+                      ('--delete=1', '--deleteString=CameraUploads')):
+            with self.subTest(flags=flags), self.assertRaises(SystemExit) as error:
+                self.run_app(*flags)
+            self.assertEqual(error.exception.code, 2)
+        self.assertFalse(app.INDEX.exists())
+
+    def test_group_string_guards_negative_deletion_regex(self):
+        camera = self.file(self.roots[0], 'CAMERA/holiday.jpg')
+        copy = self.file(self.roots[1], 'Archive/holiday.jpg')
+        unmatched = [self.file(root, 'Archive/other.jpg') for root in self.roots]
+        code, output = self.run_app('--groupString=(?i)camera',
+            '--deleteString=(?i)^(?!.*camera).*$', answer='JA')
+        self.assertEqual(code, 0)
+        self.assertTrue(camera.exists())
+        self.assertFalse(copy.exists())
+        self.assertTrue(all(path.exists() for path in unmatched))
+        self.assertIn('1 mit X markierte Dateien', output)
+        for path in unmatched:
+            self.assertIn(f'-  [{self.roots.index(path.parent.parent) + 1}] "{path}"', output)
+
+    def test_group_string_without_match_does_not_prompt(self):
+        files = [self.file(root, 'Archive/holiday.jpg') for root in self.roots]
+        with redirect_stdout(StringIO()), patch('builtins.input') as prompt:
+            code = app.main(['--extension', '.jpg', '--groupString=(?i)camera',
+                '--deleteString=(?i)^(?!.*camera).*$', *map(str, self.roots)])
+        self.assertEqual(code, 0)
+        prompt.assert_not_called()
+        self.assertTrue(all(path.exists() for path in files))
+
+    def test_group_string_invalid_options(self):
+        for flags in (('--groupString=camera',),
+                      ('--deleteString=.*', '--groupString='),
+                      ('--deleteString=.*', '--groupString=[')):
+            with self.subTest(flags=flags), self.assertRaises(SystemExit) as error:
+                self.run_app(*flags)
+            self.assertEqual(error.exception.code, 2)
+        self.assertFalse(app.INDEX.exists())
+
+    def test_delete_string_rechecks_survivor_before_deletion(self):
+        victim = self.file(self.roots[0], 'CameraUploads/holiday.jpg')
+        survivor = self.file(self.roots[1], 'Archive/holiday.jpg')
+        def confirm(prompt):
+            survivor.write_text('changed during confirmation')
+            return 'JA'
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()), patch('builtins.input', side_effect=confirm):
+            code = app.main(['--extension', '.jpg', '--deleteString=/CameraUploads/', *map(str, self.roots)])
+        self.assertEqual(code, 1)
+        self.assertTrue(victim.exists())
+        self.assertTrue(survivor.exists())
+
     def test_camera_upload_numbers_are_distinct(self):
         stamp = '2025-11-22 20.55.25'
         names = [stamp + suffix + '.jpg' for suffix in ('', '-1', '-10', '-11', '-12', '-13')]

@@ -63,6 +63,22 @@ Zunächst die Ergebnisse ohne `--delete` ansehen. Danach beispielsweise:
 
 `--delete=13` löscht Dateien aus Duplikatgruppen in Suchverzeichnis 1 und 3, einschließlich deren Unterverzeichnissen. Dateien in Suchverzeichnis 2 bleiben erhalten. Einzeldateien werden nicht gelöscht.
 
+Mit `--deleteString` werden stattdessen die Dateien ausgewählt, deren vollständiger absoluter Pfad einen Regex-Treffer enthält:
+
+```bash
+./dupFiles --extension .jpg --deleteString='/(CameraUploads|Kopien)/' /mnt/sdb/fotos-sortiert ~/Dropbox
+```
+
+Der Regex wird mit Python-Regex-Syntax und unter Beachtung der Groß-/Kleinschreibung gesucht. Für eine Suche ohne Beachtung der Groß-/Kleinschreibung kann `(?i)` vorangestellt werden. Der Pfad umfasst auch den Dateinamen. Den Regex in einfache Anführungszeichen setzen, damit die Shell ihn unverändert übergibt. Ein leerer oder ungültiger Regex wird abgewiesen. `--delete` und `--deleteString` können nicht gleichzeitig verwendet werden. Auch hier werden nur Dateien aus Duplikatgruppen gelöscht, erst nach Eingabe von `JA`. Treffen alle Pfade einer Gruppe zu, bleibt die erste Datei nach der unten beschriebenen Sortierung erhalten.
+
+`--groupString` schränkt die Löschmarkierung zusätzlich auf Gruppen ein, in denen mindestens ein vollständiger Pfad den angegebenen Regex enthält. Dieser Schalter benötigt `--deleteString`. Beispiel: Nur wenn irgendwo in der Gruppe `Camera` vorkommt, werden die Dateien ohne `Camera` zur Löschung ausgewählt (beide Prüfungen ohne Beachtung der Groß-/Kleinschreibung):
+
+```bash
+./dupFiles --extension .jpg --groupString='(?i)camera' --deleteString='(?i)^(?!.*camera).*$' /mnt/sdb/fotos-sortiert
+```
+
+Gruppen ohne `Camera` bleiben vollständig unmarkiert. `--groupString` ändert nur die Löschmarkierung, nicht die Anzeige oder die Bildung der Duplikatgruppen. Ein leerer oder ungültiger Gruppen-Regex wird abgewiesen.
+
 Spalte 1 zeigt vor dem Löschen:
 
 ```text

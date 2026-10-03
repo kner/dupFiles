@@ -128,7 +128,12 @@ def parser():
         epilog='Beispiel: dupFiles --newindex --extension .jpg --delete=13 ~/Dropbox ~/tmp ~/verz1')
     p.add_argument('--extension', required=True, help='Dateiendung ohne Beachtung der Groß-/Kleinschreibung, z. B. .jpg')
     p.add_argument('--newindex', action='store_true', help='Suchindex vollständig neu aufbauen')
-    p.add_argument('--delete', metavar='NUMMERN', help='Duplikate nach Bestätigung löschen, z. B. 13')
+    deletion = p.add_mutually_exclusive_group()
+    deletion.add_argument('--delete', metavar='NUMMERN', help='Duplikate nach Bestätigung löschen, z. B. 13')
+    deletion.add_argument('--deleteString', metavar='REGEX',
+        help='Duplikate mit Regex-Treffer im vollständigen Pfad nach Bestätigung löschen')
+    p.add_argument('--groupString', metavar='REGEX',
+        help='Mit --deleteString nur Gruppen mit mindestens einem Regex-Treffer im Pfad zum Löschen auswählen')
     p.add_argument('paths', nargs='*', help='0 bis 9 Suchverzeichnisse; Standard: aktuelles Verzeichnis')
     return p
 
@@ -136,6 +141,24 @@ def parser():
 def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
+    group_pattern = None
+    if args.groupString is not None:
+        if args.deleteString is None:
+            p.error('--groupString benötigt --deleteString.')
+        if not args.groupString:
+            p.error('--groupString erwartet einen nicht leeren Regex.')
+        try:
+            group_pattern = re.compile(args.groupString)
+        except re.error as error:
+            p.error(f'Ungültiger Regex für --groupString: {error}')
+    delete_pattern = None
+    if args.deleteString is not None:
+        if not args.deleteString:
+            p.error('--deleteString erwartet einen nicht leeren Regex.')
+        try:
+            delete_pattern = re.compile(args.deleteString)
+        except re.error as error:
+            p.error(f'Ungültiger Regex für --deleteString: {error}')
     if len(args.paths) > 9:
         p.error('Höchstens 9 Suchverzeichnisse sind erlaubt.')
     extension = args.extension.lstrip('=').lstrip('.').casefold()
@@ -174,11 +197,19 @@ def main(argv=None):
     planned = []
     for group in duplicates:
         group.sort(key=lambda e: (e['root'], e['path']))
-        victims = [e for e in group if e['root'] in selected]
-        survivors = [e for e in group if e['root'] not in selected]
+        group_matches = group_pattern is None or any(
+            group_pattern.search(e['path']) is not None for e in group)
+        def matches_deletion(entry):
+            if not group_matches:
+                return False
+            if delete_pattern is not None:
+                return delete_pattern.search(entry['path']) is not None
+            return entry['root'] in selected
+        victims = [e for e in group if matches_deletion(e)]
+        survivors = [e for e in group if not matches_deletion(e)]
         if not survivors:
             survivors = group[:1]
-            victims = group[1:] if selected else []
+            victims = group[1:]
         print(f"\n{group[0]['key']}")
         for e in group:
             marker = 'X' if e in victims else '-'
@@ -217,7 +248,7 @@ def main(argv=None):
                 print(f"Nicht gelöscht: {e['path']!r}: {error}", file=sys.stderr)
     if removed:
         save_index(config, [e for e in entries if e['path'] not in removed])
-    if selected:
+    if selected or delete_pattern is not None:
         print(f'{len(removed)} Dateien gelöscht.')
     return 1 if failed else 0
 
